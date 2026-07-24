@@ -1,0 +1,271 @@
+import streamlit as st
+from openai import OpenAI
+import requests
+import time
+
+# Page Configuration
+st.set_page_config(page_title="TEAMUPAI 1.0", page_icon="⚔️", layout="wide")
+
+# --- CUSTOM DARK THEME & Chat Input Text Color Fix ---
+st.markdown("""
+<style>
+    /* Main App Background */
+    .stApp { background-color: #0d0d0d !important; color: #ffffff !important; }
+    [data-testid="stSidebar"] { background-color: #1a1a1a !important; color: #ffffff !important; }
+    
+    /* 🛠️ CHAT INPUT BOX & TEXT COLOR STRICT FIX */
+    /* Target the container of chat input */
+    [data-testid="stChatInput"] {
+        background-color: #21262d !important;
+        border: 1px solid #404040 !important;
+        border-radius: 12px !important;
+    }
+    
+    /* Target internal elements of the input box */
+    [data-testid="stChatInput"] > div,
+    [data-testid="stChatInput"] div[data-baseweb="textarea"],
+    [data-testid="stChatInput"] div[data-baseweb="base-input"] {
+        background-color: #21262d !important;
+        color: #ffffff !important;
+    }
+
+    /* Target the text area where user writes */
+    [data-testid="stChatInput"] textarea {
+        background-color: #21262d !important;
+        color: #ffffff !important;
+        font-size: 16px !important;
+        -webkit-text-fill-color: #ffffff !important; /* Force white text on Chrome/Safari */
+    }
+
+    /* Target placeholder text */
+    [data-testid="stChatInput"] textarea::placeholder {
+        color: #8b949e !important;
+        -webkit-text-fill-color: #8b949e !important;
+    }
+
+    /* Text inputs & selectboxes inside login page */
+    .stTextInput input {
+        background-color: #262626 !important;
+        color: #ffffff !important;
+        border: 1px solid #404040 !important;
+    }
+
+    /* Custom Chat Cards */
+    .chat-card { padding: 15px; border-radius: 10px; margin-bottom: 15px; color: #ffffff; }
+    .chat-user { background-color: #21262d; border-left: 5px solid #8b949e; }
+    .chat-model-a { background-color: #3b1111; border-left: 5px solid #ff4d4d; }
+    .chat-model-b { background-color: #3b3311; border-left: 5px solid #ffcc00; }
+    .chat-judge { background-color: #113b19; border-left: 5px solid #2ea043; border-radius: 10px; padding: 20px; margin-top: 15px; margin-bottom: 20px; }
+
+    .openrouter-btn {
+        display: inline-block; width: 100%; text-align: center; background-color: #2b2b2b;
+        color: #61afef !important; padding: 8px 0px; border-radius: 5px; text-decoration: none;
+        font-weight: bold; border: 1px solid #404040; margin-top: 5px; margin-bottom: 15px;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+# --- SESSION STATES ---
+if "user" not in st.session_state:
+    st.session_state.user = None
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+
+# --- 1. SPLASH SCREEN (5 SECONDS LOGO) ---
+if "splash_done" not in st.session_state:
+    splash_placeholder = st.empty()
+    with splash_placeholder.container():
+        st.markdown("<br><br><br>", unsafe_allow_html=True)
+        col1, col2, col3 = st.columns([1, 2, 1])
+        with col2:
+            st.image("logo.png", width=220)
+            st.markdown("<h2 style='text-align: center; color: white;'>TEAMUPAI 1.0</h2>", unsafe_allow_html=True)
+            st.progress(100)
+    time.sleep(5)
+    st.session_state.splash_done = True
+    splash_placeholder.empty()
+
+# ==============================================================================
+# 🔒 SCENARIO 1: USER IS NOT LOGGED IN (LOGIN SCREEN ONLY)
+# ==============================================================================
+if st.session_state.user is None:
+    st.markdown("<br>", unsafe_allow_html=True)
+    col1, col2, col3 = st.columns([1, 1.5, 1])
+    
+    with col2:
+        st.image("logo.png", width=100)
+        st.title("🔐 Login to TEAMUPAI")
+        st.caption("You must log in to access the Multi-Model Debate Arena.")
+        
+        # --- OAUTH SOCIAL LOGIN BUTTONS ---
+        st.subheader("Quick Social Login")
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            if st.button("🌐 Google", use_container_width=True):
+                st.session_state.user = {"email": "google_user@gmail.com"}
+                st.rerun()
+        with c2:
+            if st.button("🪟 Microsoft", use_container_width=True):
+                st.session_state.user = {"email": "ms_user@outlook.com"}
+                st.rerun()
+        with c3:
+            if st.button("🍎 Apple", use_container_width=True):
+                st.session_state.user = {"email": "apple_user@icloud.com"}
+                st.rerun()
+                
+        st.markdown("---")
+        
+        # --- STANDARD EMAIL LOGIN / SIGNUP ---
+        st.subheader("Or Sign in with Email")
+        tab1, tab2 = st.tabs(["🔑 Sign In", "📝 Sign Up"])
+        
+        with tab1:
+            email = st.text_input("Email", key="login_email")
+            password = st.text_input("Password", type="password", key="login_pass")
+            if st.button("Sign In", type="primary", use_container_width=True):
+                if email and password:
+                    st.session_state.user = {"email": email}
+                    st.success("Logged in successfully!")
+                    st.rerun()
+                else:
+                    st.error("Please enter Email & Password!")
+
+        with tab2:
+            new_email = st.text_input("Email", key="reg_email")
+            new_pass = st.text_input("Password", type="password", key="reg_pass")
+            if st.button("Create Account", use_container_width=True):
+                st.info("Registration trigger setup ready for Supabase backend.")
+
+# ==============================================================================
+# 🚀 SCENARIO 2: USER IS LOGGED IN (DEBATE ARENA ACCESSIBLE HERE ONLY)
+# ==============================================================================
+else:
+    # Header & Logo
+    h_col1, h_col2 = st.columns([0.08, 0.92])
+    with h_col1:
+        st.image("logo.png", width=50)
+    with h_col2:
+        st.title("⚔️ TEAMUPAI 1.0")
+
+    # --- SIDEBAR CONFIGURATION ---
+    st.sidebar.header("⚙️ Settings")
+    st.sidebar.write(f"👤 Logged in as: **{st.session_state.user['email']}**")
+    
+    if st.sidebar.button("🚪 Logout", type="secondary"):
+        st.session_state.user = None
+        st.session_state.messages = []
+        st.rerun()
+
+    st.sidebar.markdown("---")
+    api_key = st.sidebar.text_input("OpenRouter API Key:", type="password")
+
+    st.sidebar.markdown(
+        '<a href="https://openrouter.ai/settings/keys" target="_blank" class="openrouter-btn">🔑 Get OpenRouter API Key (Free)</a>',
+        unsafe_allow_html=True
+    )
+
+    # --- DYNAMIC FREE MODELS FETCH ---
+    @st.cache_data(ttl=3600)
+    def get_active_free_models():
+        try:
+            res = requests.get("https://openrouter.ai/api/v1/models", timeout=5)
+            if res.status_code == 200:
+                data = res.json().get("data", [])
+                free_models = {}
+                for m in data:
+                    if m.get("id", "").endswith(":free") or (
+                        m.get("pricing", {}).get("prompt") == "0" and m.get("pricing", {}).get("completion") == "0"
+                    ):
+                        free_models[m.get("name", m["id"])] = m["id"]
+                if free_models:
+                    return free_models
+        except Exception:
+            pass
+        return {
+            "Gemini 2.0 Flash Lite": "google/gemini-2.0-flash-lite-001:free",
+            "Llama 3.3 70B Instruct": "meta-llama/llama-3.3-70b-instruct:free",
+            "Qwen 2.5 Coder 32B": "qwen/qwen-2.5-coder-32b-instruct:free",
+        }
+
+    FREE_MODELS = get_active_free_models()
+    model_a_name = st.sidebar.selectbox("🔴 Fighter 1 (Model A)", list(FREE_MODELS.keys()), index=0)
+    model_b_name = st.sidebar.selectbox("🟡 Fighter 2 (Model B)", list(FREE_MODELS.keys()), index=min(1, len(FREE_MODELS)-1))
+    judge_model_name = st.sidebar.selectbox("🟢 Final Judge", list(FREE_MODELS.keys()), index=min(2, len(FREE_MODELS)-1))
+
+    model_a = FREE_MODELS[model_a_name]
+    model_b = FREE_MODELS[model_b_name]
+    judge_model = FREE_MODELS[judge_model_name]
+
+    if st.sidebar.button("🗑️ Reset Debate Arena"):
+        st.session_state.messages = []
+        st.rerun()
+
+    # --- SMART API CALL HELPER ---
+    def call_openrouter(client, model_id, prompt):
+        try:
+            response = client.chat.completions.create(
+                model=model_id,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            return response.choices[0].message.content
+        except Exception as e:
+            error_msg = str(e).lower()
+            if "429" in error_msg or "rate-limited" in error_msg or "404" in error_msg or "unavailable" in error_msg:
+                fallback_models = [m for m in FREE_MODELS.values() if m != model_id]
+                fallback_model = fallback_models[0] if fallback_models else "google/gemini-2.0-flash-lite-001:free"
+                st.warning(f"⚠️ Model `{model_id}` busy. Switching to `{fallback_model}`...")
+                time.sleep(1)
+                response = client.chat.completions.create(
+                    model=fallback_model,
+                    messages=[{"role": "user", "content": prompt}]
+                )
+                return response.choices[0].message.content
+            else:
+                raise e
+
+    # --- DEBATE ROUND PROCESSOR ---
+    def process_debate_round(user_query, client):
+        st.session_state.messages.append({"role": "User", "content": user_query, "type": "user"})
+        full_history = "".join([f"[{m['role']}]: {m['content']}\n\n" for m in st.session_state.messages[:-1]])
+
+        # Step 1: Model A
+        with st.spinner(f"🔴 {model_a_name} generating..."):
+            prompt_a = f"History:\n{full_history}\nUser Request: {user_query}\nProvide analysis/solution."
+            res_a = call_openrouter(client, model_a, prompt_a)
+            st.session_state.messages.append({"role": model_a_name, "content": res_a, "type": "model_a"})
+
+        # Step 2: Model B
+        with st.spinner(f"🟡 {model_b_name} debating..."):
+            prompt_b = f"History:\n{full_history}\nUser: {user_query}\n{model_a_name} said: '{res_a}'\nCritique and improve."
+            res_b = call_openrouter(client, model_b, prompt_b)
+            st.session_state.messages.append({"role": model_b_name, "content": res_b, "type": "model_b"})
+
+        # Step 3: Judge
+        with st.spinner(f"🟢 Final Judge ({judge_model_name}) synthesizing..."):
+            judge_prompt = f"History:\n{full_history}\nUser: {user_query}\n[{model_a_name}]: {res_a}\n[{model_b_name}]: {res_b}\nSynthesize final truth."
+            final_res = call_openrouter(client, judge_model, judge_prompt)
+            st.session_state.messages.append({"role": judge_model_name, "content": final_res, "type": "judge"})
+
+    # --- MAIN ARENA WORKFLOW ---
+    if api_key:
+        client = OpenAI(base_url="https://openrouter.ai/api/v1", api_key=api_key)
+
+        # Render History
+        for msg in st.session_state.messages:
+            if msg["type"] == "user":
+                st.markdown(f'<div class="chat-card chat-user"><b>🧑‍💻 User:</b><br><br>{msg["content"]}</div>', unsafe_allow_html=True)
+            elif msg["type"] == "model_a":
+                st.markdown(f'<div class="chat-card chat-model-a"><b>🔴 {msg["role"]}:</b><br><br>{msg["content"]}</div>', unsafe_allow_html=True)
+            elif msg["type"] == "model_b":
+                st.markdown(f'<div class="chat-card chat-model-b"><b>🟡 {msg["role"]}:</b><br><br>{msg["content"]}</div>', unsafe_allow_html=True)
+            elif msg["type"] == "judge":
+                st.markdown(f'<div class="chat-judge"><h3>🟢 🏆 Final Synthesized Output ({msg["role"]}):</h3><hr>{msg["content"]}</div>', unsafe_allow_html=True)
+
+        # Chat Input Box
+        user_input = st.chat_input("Enter your prompt or follow-up question here...")
+        if user_input:
+            process_debate_round(user_input, client)
+            st.rerun()
+
+    else:
+        st.info("👈 Please enter your OpenRouter API Key in the sidebar to start.")
