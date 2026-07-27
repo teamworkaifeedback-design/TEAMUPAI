@@ -7,16 +7,18 @@ from supabase import create_client
 # Page Configuration
 st.set_page_config(page_title="TEAMUPAI 1.0", page_icon="⚔️", layout="wide")
 
-# --- SUPABASE DATABASE CONFIGURATION ---
-# (Streamlit Cloud Secrets වල Keys තියෙනවා නම් ඒකෙන් ගනී, නැත්නම් Direct Variable වලින් ගනී)
-SUPABASE_URL = st.secrets.get("SUPABASE_URL", "https://ifigpjpmcamrrddyxgdc.supabase.co/rest/v1/")
-SUPABASE_KEY = st.secrets.get("SUPABASE_KEY", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlmaWdwanBtY2FtcnJkZHl4Z2RjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODUxMjU0NTEsImV4cCI6MjEwMDcwMTQ1MX0.W8RiYU143rU7laR-eoVK6KfWZuNAb7c0FPeZWVTjZT4")
+# --- SUPABASE SECURE CONFIGURATION ---
+# Streamlit Secrets වලින් automatic Keys ලබා ගනී
+try:
+    SUPABASE_URL = st.secrets["SUPABASE_URL"]
+    SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
+    supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+except Exception:
+    st.error("⚠️ Supabase Secrets configured නැත! Streamlit Settings -> Secrets බලන්න.")
+    st.stop()
 
-supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
-
-# --- SUPABASE HELPER FUNCTIONS ---
-def login_user(email, password):
-    """Logs in an existing user via Supabase"""
+# --- SUPABASE AUTH & DB FUNCTIONS ---
+def login_with_email(email, password):
     try:
         res = supabase.auth.sign_in_with_password({"email": email, "password": password})
         return res.user
@@ -24,18 +26,29 @@ def login_user(email, password):
         st.error(f"Login Error: {e}")
         return None
 
-def register_user(email, password):
-    """Registers a new user via Supabase"""
+def register_with_email(email, password):
     try:
         res = supabase.auth.sign_up({"email": email, "password": password})
-        st.success("Account created successfully! You can now log in.")
+        st.success("Account එක සාර්ථකව සෑදුවා! දැන් Sign In වෙන්න.")
         return res.user
     except Exception as e:
         st.error(f"Registration Error: {e}")
         return None
 
+def login_with_provider(provider_name):
+    """Triggers OAuth Login for Google / GitHub"""
+    try:
+        res = supabase.auth.sign_in_with_oauth({
+            "provider": provider_name,
+            "options": {
+                "redirect_to": "https://teamupai.streamlit.app" # ඔයාගේ App URL එක
+            }
+        })
+        st.info(f"Redirecting to {provider_name.capitalize()} Login...")
+    except Exception as e:
+        st.error(f"{provider_name} Login Error: {e}")
+
 def save_chat_to_db(user_email, role, content, msg_type):
-    """Saves each debate message to Supabase database"""
     try:
         supabase.table("chat_history").insert({
             "user_email": user_email,
@@ -94,7 +107,7 @@ if "splash_done" not in st.session_state:
     splash_placeholder.empty()
 
 # ==============================================================================
-# 🔒 SCENARIO 1: USER IS NOT LOGGED IN (LOGIN SCREEN ONLY)
+# 🔒 SCENARIO 1: USER IS NOT LOGGED IN
 # ==============================================================================
 if st.session_state.user is None:
     st.markdown("<br>", unsafe_allow_html=True)
@@ -105,6 +118,20 @@ if st.session_state.user is None:
         st.title("🔐 Login to TEAMUPAI")
         st.caption("You must log in to access the Multi-Model Debate Arena.")
         
+        # --- SOCIAL OAUTH LOGIN BUTTONS ---
+        st.subheader("Quick Social Login")
+        c1, c2 = st.columns(2)
+        with c1:
+            if st.button("🌐 Sign in with Google", use_container_width=True):
+                login_with_provider("google")
+        with c2:
+            if st.button("🐙 Sign in with GitHub", use_container_width=True):
+                login_with_provider("github")
+                
+        st.markdown("---")
+        
+        # --- STANDARD EMAIL LOGIN / SIGNUP ---
+        st.subheader("Or Sign in with Email")
         tab1, tab2 = st.tabs(["🔑 Sign In", "📝 Sign Up"])
         
         with tab1:
@@ -112,7 +139,7 @@ if st.session_state.user is None:
             password = st.text_input("Password", type="password", key="login_pass")
             if st.button("Sign In", type="primary", use_container_width=True):
                 if email and password:
-                    user = login_user(email, password)
+                    user = login_with_email(email, password)
                     if user:
                         st.session_state.user = {"email": user.email}
                         st.success("Logged in successfully!")
@@ -125,12 +152,12 @@ if st.session_state.user is None:
             new_pass = st.text_input("Password", type="password", key="reg_pass")
             if st.button("Create Account", use_container_width=True):
                 if new_email and new_pass:
-                    register_user(new_email, new_pass)
+                    register_with_email(new_email, new_pass)
                 else:
                     st.error("Please fill in both Email and Password!")
 
 # ==============================================================================
-# 🚀 SCENARIO 2: USER IS LOGGED IN (DEBATE ARENA ACCESSIBLE HERE)
+# 🚀 SCENARIO 2: USER IS LOGGED IN
 # ==============================================================================
 else:
     # Header & Logo
@@ -140,7 +167,7 @@ else:
     with h_col2:
         st.title("⚔️ TEAMUPAI 1.0")
 
-    # --- SIDEBAR CONFIGURATION ---
+    # Sidebar Options
     st.sidebar.header("⚙️ Settings")
     st.sidebar.write(f"👤 Logged in as: **{st.session_state.user['email']}**")
     
@@ -157,7 +184,7 @@ else:
         unsafe_allow_html=True
     )
 
-    # --- DYNAMIC FREE MODELS FETCH ---
+    # Fetch Active Free Models
     @st.cache_data(ttl=3600)
     def get_active_free_models():
         try:
@@ -193,7 +220,6 @@ else:
         st.session_state.messages = []
         st.rerun()
 
-    # --- SMART API CALL HELPER ---
     def call_openrouter(client, model_id, prompt):
         try:
             response = client.chat.completions.create(
@@ -216,11 +242,9 @@ else:
             else:
                 raise e
 
-    # --- DEBATE ROUND PROCESSOR (WITH DATABASE SAVE) ---
     def process_debate_round(user_query, client):
         user_email = st.session_state.user['email']
         
-        # User message
         st.session_state.messages.append({"role": "User", "content": user_query, "type": "user"})
         save_chat_to_db(user_email, "User", user_query, "user")
         
@@ -247,11 +271,10 @@ else:
             st.session_state.messages.append({"role": judge_model_name, "content": final_res, "type": "judge"})
             save_chat_to_db(user_email, judge_model_name, final_res, "judge")
 
-    # --- MAIN ARENA WORKFLOW ---
+    # Main Arena Output
     if api_key:
         client = OpenAI(base_url="https://openrouter.ai/api/v1", api_key=api_key)
 
-        # Render History
         for msg in st.session_state.messages:
             if msg["type"] == "user":
                 st.markdown(f'<div class="chat-card chat-user"><b>🧑‍💻 User:</b><br><br>{msg["content"]}</div>', unsafe_allow_html=True)
@@ -262,7 +285,6 @@ else:
             elif msg["type"] == "judge":
                 st.markdown(f'<div class="chat-judge"><h3>🟢 🏆 Final Synthesized Output ({msg["role"]}):</h3><hr>{msg["content"]}</div>', unsafe_allow_html=True)
 
-        # Chat Input Box
         user_input = st.chat_input("Enter your prompt or follow-up question here...")
         if user_input:
             process_debate_round(user_input, client)
