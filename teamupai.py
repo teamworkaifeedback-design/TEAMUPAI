@@ -2,55 +2,63 @@ import streamlit as st
 from openai import OpenAI
 import requests
 import time
+from supabase import create_client
 
 # Page Configuration
 st.set_page_config(page_title="TEAMUPAI 1.0", page_icon="⚔️", layout="wide")
 
-# --- CUSTOM DARK THEME & Chat Input Text Color Fix ---
+# --- SUPABASE DATABASE CONFIGURATION ---
+# (Streamlit Cloud Secrets වල Keys තියෙනවා නම් ඒකෙන් ගනී, නැත්නම් Direct Variable වලින් ගනී)
+SUPABASE_URL = st.secrets.get("SUPABASE_URL", "https://ifigpjpmcamrrddyxgdc.supabase.co/rest/v1/")
+SUPABASE_KEY = st.secrets.get("SUPABASE_KEY", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlmaWdwanBtY2FtcnJkZHl4Z2RjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODUxMjU0NTEsImV4cCI6MjEwMDcwMTQ1MX0.W8RiYU143rU7laR-eoVK6KfWZuNAb7c0FPeZWVTjZT4")
+
+supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+
+# --- SUPABASE HELPER FUNCTIONS ---
+def login_user(email, password):
+    """Logs in an existing user via Supabase"""
+    try:
+        res = supabase.auth.sign_in_with_password({"email": email, "password": password})
+        return res.user
+    except Exception as e:
+        st.error(f"Login Error: {e}")
+        return None
+
+def register_user(email, password):
+    """Registers a new user via Supabase"""
+    try:
+        res = supabase.auth.sign_up({"email": email, "password": password})
+        st.success("Account created successfully! You can now log in.")
+        return res.user
+    except Exception as e:
+        st.error(f"Registration Error: {e}")
+        return None
+
+def save_chat_to_db(user_email, role, content, msg_type):
+    """Saves each debate message to Supabase database"""
+    try:
+        supabase.table("chat_history").insert({
+            "user_email": user_email,
+            "role": role,
+            "content": content,
+            "msg_type": msg_type
+        }).execute()
+    except Exception as e:
+        print(f"Error saving to DB: {e}")
+
+# --- CUSTOM DARK THEME & STYLING ---
 st.markdown("""
 <style>
-    /* Main App Background */
     .stApp { background-color: #0d0d0d !important; color: #ffffff !important; }
     [data-testid="stSidebar"] { background-color: #1a1a1a !important; color: #ffffff !important; }
     
-    /* 🛠️ CHAT INPUT BOX & TEXT COLOR STRICT FIX */
-    /* Target the container of chat input */
-    [data-testid="stChatInput"] {
-        background-color: #21262d !important;
-        border: 1px solid #404040 !important;
-        border-radius: 12px !important;
-    }
-    
-    /* Target internal elements of the input box */
-    [data-testid="stChatInput"] > div,
-    [data-testid="stChatInput"] div[data-baseweb="textarea"],
-    [data-testid="stChatInput"] div[data-baseweb="base-input"] {
-        background-color: #21262d !important;
-        color: #ffffff !important;
-    }
+    [data-testid="stChatInput"] { background-color: #21262d !important; border: 1px solid #404040 !important; border-radius: 12px !important; }
+    [data-testid="stChatInput"] > div, [data-testid="stChatInput"] div[data-baseweb="textarea"], [data-testid="stChatInput"] div[data-baseweb="base-input"] { background-color: #21262d !important; color: #ffffff !important; }
+    [data-testid="stChatInput"] textarea { background-color: #21262d !important; color: #ffffff !important; font-size: 16px !important; -webkit-text-fill-color: #ffffff !important; }
+    [data-testid="stChatInput"] textarea::placeholder { color: #8b949e !important; -webkit-text-fill-color: #8b949e !important; }
 
-    /* Target the text area where user writes */
-    [data-testid="stChatInput"] textarea {
-        background-color: #21262d !important;
-        color: #ffffff !important;
-        font-size: 16px !important;
-        -webkit-text-fill-color: #ffffff !important; /* Force white text on Chrome/Safari */
-    }
+    .stTextInput input { background-color: #262626 !important; color: #ffffff !important; border: 1px solid #404040 !important; }
 
-    /* Target placeholder text */
-    [data-testid="stChatInput"] textarea::placeholder {
-        color: #8b949e !important;
-        -webkit-text-fill-color: #8b949e !important;
-    }
-
-    /* Text inputs & selectboxes inside login page */
-    .stTextInput input {
-        background-color: #262626 !important;
-        color: #ffffff !important;
-        border: 1px solid #404040 !important;
-    }
-
-    /* Custom Chat Cards */
     .chat-card { padding: 15px; border-radius: 10px; margin-bottom: 15px; color: #ffffff; }
     .chat-user { background-color: #21262d; border-left: 5px solid #8b949e; }
     .chat-model-a { background-color: #3b1111; border-left: 5px solid #ff4d4d; }
@@ -97,26 +105,6 @@ if st.session_state.user is None:
         st.title("🔐 Login to TEAMUPAI")
         st.caption("You must log in to access the Multi-Model Debate Arena.")
         
-        # --- OAUTH SOCIAL LOGIN BUTTONS ---
-        st.subheader("Quick Social Login")
-        c1, c2, c3 = st.columns(3)
-        with c1:
-            if st.button("🌐 Google", use_container_width=True):
-                st.session_state.user = {"email": "google_user@gmail.com"}
-                st.rerun()
-        with c2:
-            if st.button("🪟 Microsoft", use_container_width=True):
-                st.session_state.user = {"email": "ms_user@outlook.com"}
-                st.rerun()
-        with c3:
-            if st.button("🍎 Apple", use_container_width=True):
-                st.session_state.user = {"email": "apple_user@icloud.com"}
-                st.rerun()
-                
-        st.markdown("---")
-        
-        # --- STANDARD EMAIL LOGIN / SIGNUP ---
-        st.subheader("Or Sign in with Email")
         tab1, tab2 = st.tabs(["🔑 Sign In", "📝 Sign Up"])
         
         with tab1:
@@ -124,9 +112,11 @@ if st.session_state.user is None:
             password = st.text_input("Password", type="password", key="login_pass")
             if st.button("Sign In", type="primary", use_container_width=True):
                 if email and password:
-                    st.session_state.user = {"email": email}
-                    st.success("Logged in successfully!")
-                    st.rerun()
+                    user = login_user(email, password)
+                    if user:
+                        st.session_state.user = {"email": user.email}
+                        st.success("Logged in successfully!")
+                        st.rerun()
                 else:
                     st.error("Please enter Email & Password!")
 
@@ -134,10 +124,13 @@ if st.session_state.user is None:
             new_email = st.text_input("Email", key="reg_email")
             new_pass = st.text_input("Password", type="password", key="reg_pass")
             if st.button("Create Account", use_container_width=True):
-                st.info("Registration trigger setup ready for Supabase backend.")
+                if new_email and new_pass:
+                    register_user(new_email, new_pass)
+                else:
+                    st.error("Please fill in both Email and Password!")
 
 # ==============================================================================
-# 🚀 SCENARIO 2: USER IS LOGGED IN (DEBATE ARENA ACCESSIBLE HERE ONLY)
+# 🚀 SCENARIO 2: USER IS LOGGED IN (DEBATE ARENA ACCESSIBLE HERE)
 # ==============================================================================
 else:
     # Header & Logo
@@ -223,9 +216,14 @@ else:
             else:
                 raise e
 
-    # --- DEBATE ROUND PROCESSOR ---
+    # --- DEBATE ROUND PROCESSOR (WITH DATABASE SAVE) ---
     def process_debate_round(user_query, client):
+        user_email = st.session_state.user['email']
+        
+        # User message
         st.session_state.messages.append({"role": "User", "content": user_query, "type": "user"})
+        save_chat_to_db(user_email, "User", user_query, "user")
+        
         full_history = "".join([f"[{m['role']}]: {m['content']}\n\n" for m in st.session_state.messages[:-1]])
 
         # Step 1: Model A
@@ -233,18 +231,21 @@ else:
             prompt_a = f"History:\n{full_history}\nUser Request: {user_query}\nProvide analysis/solution."
             res_a = call_openrouter(client, model_a, prompt_a)
             st.session_state.messages.append({"role": model_a_name, "content": res_a, "type": "model_a"})
+            save_chat_to_db(user_email, model_a_name, res_a, "model_a")
 
         # Step 2: Model B
         with st.spinner(f"🟡 {model_b_name} debating..."):
             prompt_b = f"History:\n{full_history}\nUser: {user_query}\n{model_a_name} said: '{res_a}'\nCritique and improve."
             res_b = call_openrouter(client, model_b, prompt_b)
             st.session_state.messages.append({"role": model_b_name, "content": res_b, "type": "model_b"})
+            save_chat_to_db(user_email, model_b_name, res_b, "model_b")
 
         # Step 3: Judge
         with st.spinner(f"🟢 Final Judge ({judge_model_name}) synthesizing..."):
             judge_prompt = f"History:\n{full_history}\nUser: {user_query}\n[{model_a_name}]: {res_a}\n[{model_b_name}]: {res_b}\nSynthesize final truth."
             final_res = call_openrouter(client, judge_model, judge_prompt)
             st.session_state.messages.append({"role": judge_model_name, "content": final_res, "type": "judge"})
+            save_chat_to_db(user_email, judge_model_name, final_res, "judge")
 
     # --- MAIN ARENA WORKFLOW ---
     if api_key:
