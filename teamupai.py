@@ -36,15 +36,21 @@ def register_with_email(email, password):
         return None
 
 def login_with_provider(provider_name):
-    """Triggers OAuth Login for Google / GitHub"""
+    """Triggers OAuth Login for Google / GitHub & redirects browser"""
     try:
         res = supabase.auth.sign_in_with_oauth({
             "provider": provider_name,
             "options": {
-                "redirect_to": "https://teamupai.streamlit.app" # ඔයාගේ App URL එක
+                "redirect_to": "https://teamupai.streamlit.app"  # ඔයාගේ App URL එක
             }
         })
-        st.info(f"Redirecting to {provider_name.capitalize()} Login...")
+        
+        # Supabase එකෙන් ලැබෙන OAuth URL එකට Browser එක Auto Redirect කිරීම:
+        if res and res.url:
+            st.info(f"Connecting to {provider_name.capitalize()}...")
+            # Meta refresh හරහා Browser එක Google / GitHub එකට කෙලින්ම ගෙන යයි
+            st.markdown(f'<meta http-equiv="refresh" content="0; url={res.url}">', unsafe_allow_html=True)
+            
     except Exception as e:
         st.error(f"{provider_name} Login Error: {e}")
 
