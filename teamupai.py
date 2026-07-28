@@ -14,7 +14,7 @@ try:
     SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
     supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 except Exception:
-    st.error("⚠️ Supabase Secrets configured නැත! Streamlit Settings -> Secrets බලන්න.")
+    st.error("⚠️ Supabase Secrets not configured! Check Streamlit Settings -> Secrets.")
     st.stop()
 
 # --- SUPABASE AUTH & DB FUNCTIONS ---
@@ -29,7 +29,7 @@ def login_with_email(email, password):
 def register_with_email(email, password):
     try:
         res = supabase.auth.sign_up({"email": email, "password": password})
-        st.success("Account successfully created! Please log in and verify your email address.")
+        st.success("Account successfully created! Please verify your email address.")
         return res.user
     except Exception as e:
         st.error(f"Registration Error: {e}")
@@ -71,7 +71,7 @@ def load_chat_by_session(session_id):
         return []
 
 def save_anonymous_feedback(text):
-    """Save user feedback without user info"""
+    """Save user feedback without personal details"""
     try:
         supabase.table("feedbacks").insert({"feedback_text": text}).execute()
         st.sidebar.success("Thank you for your feedback! 🙏")
@@ -173,7 +173,7 @@ else:
     with h_col1:
         st.image("logo.png", width=50)
     with h_col2:
-        st.title("⚔️ TEAMUPAI 1.0")
+        st.title("TEAMUPAI 1.0")
 
     # --- SIDEBAR CONFIGURATION ---
     st.sidebar.header("⚙️ Settings")
@@ -186,7 +186,7 @@ else:
 
     st.sidebar.markdown("---")
     
-    # ➕ NEW CHAT BUTTON & CHAT HISTORY
+    # NEW CHAT BUTTON & CHAT HISTORY
     if st.sidebar.button("➕ New Chat", use_container_width=True, type="primary"):
         st.session_state.current_session_id = str(uuid.uuid4())
         st.session_state.messages = []
@@ -194,9 +194,9 @@ else:
 
     user_sessions = load_user_sessions(st.session_state.user['email'])
     if user_sessions:
-        st.sidebar.subheader("📜 Previous Debates")
+        st.sidebar.subheader("📜 Chat History")
         selected_session = st.sidebar.selectbox(
-            "Select History Session:", 
+            "Select Session:", 
             user_sessions, 
             format_func=lambda x: f"Session: {x[:8]}..."
         )
@@ -257,7 +257,7 @@ else:
         if fb_text.strip():
             save_anonymous_feedback(fb_text.strip())
         else:
-            st.sidebar.warning("Please enter some text first!")
+            st.sidebar.warning("Please enter your feedback first!")
 
     def call_openrouter(client, model_id, prompt):
         try:
