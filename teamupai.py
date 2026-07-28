@@ -6,7 +6,7 @@ import uuid
 from supabase import create_client
 
 # Page Configuration
-st.set_page_config(page_title="TEAMUPAI 1.0", page_icon="⚔️", layout="wide")
+st.set_page_config(page_title="TEAMUPAI 1.0", layout="wide")
 
 # --- SUPABASE CONFIGURATION ---
 try:
