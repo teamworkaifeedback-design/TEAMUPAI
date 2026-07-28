@@ -2,13 +2,13 @@ import streamlit as st
 from openai import OpenAI
 import requests
 import time
+import uuid
 from supabase import create_client
 
 # Page Configuration
-st.set_page_config(page_title="TEAMUPAI 1.0", layout="wide")
+st.set_page_config(page_title="TEAMUPAI 1.0", page_icon="⚔️", layout="wide")
 
-# --- SUPABASE SECURE CONFIGURATION ---
-# Streamlit Secrets වලින් automatic Keys ලබා ගනී
+# --- SUPABASE CONFIGURATION ---
 try:
     SUPABASE_URL = st.secrets["SUPABASE_URL"]
     SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
@@ -35,37 +35,50 @@ def register_with_email(email, password):
         st.error(f"Registration Error: {e}")
         return None
 
-def login_with_provider(provider_name):
-    """Triggers OAuth Login for Google / GitHub & redirects browser"""
-    try:
-        res = supabase.auth.sign_in_with_oauth({
-            "provider": provider_name,
-            "options": {
-                "redirect_to": "https://teamupai.streamlit.app"  # ඔයාගේ App URL එක
-            }
-        })
-        
-        # Supabase එකෙන් ලැබෙන OAuth URL එකට Browser එක Auto Redirect කිරීම:
-        if res and res.url:
-            st.info(f"Connecting to {provider_name.capitalize()}...")
-            # Meta refresh හරහා Browser එක Google / GitHub එකට කෙලින්ම ගෙන යයි
-            st.markdown(f'<meta http-equiv="refresh" content="0; url={res.url}">', unsafe_allow_html=True)
-            
-    except Exception as e:
-        st.error(f"{provider_name} Login Error: {e}")
-
-def save_chat_to_db(user_email, role, content, msg_type):
+def save_chat_to_db(user_email, session_id, role, content, msg_type):
     try:
         supabase.table("chat_history").insert({
             "user_email": user_email,
+            "session_id": session_id,
             "role": role,
             "content": content,
             "msg_type": msg_type
         }).execute()
     except Exception as e:
-        print(f"Error saving to DB: {e}")
+        print(f"Error saving chat: {e}")
 
-# --- CUSTOM DARK THEME & STYLING ---
+def load_user_sessions(user_email):
+    """Fetch distinct chat sessions for the user"""
+    try:
+        res = supabase.table("chat_history").select("session_id, created_at").eq("user_email", user_email).order("created_at", desc=True).execute()
+        sessions = []
+        seen = set()
+        for row in res.data:
+            sid = row["session_id"]
+            if sid not in seen:
+                seen.add(sid)
+                sessions.append(sid)
+        return sessions
+    except Exception:
+        return []
+
+def load_chat_by_session(session_id):
+    """Load messages of a specific session"""
+    try:
+        res = supabase.table("chat_history").select("*").eq("session_id", session_id).order("created_at").execute()
+        return res.data
+    except Exception:
+        return []
+
+def save_anonymous_feedback(text):
+    """Save user feedback without user info"""
+    try:
+        supabase.table("feedbacks").insert({"feedback_text": text}).execute()
+        st.sidebar.success("Thank you for your feedback! 🙏")
+    except Exception as e:
+        st.sidebar.error(f"Error submitting feedback: {e}")
+
+# --- CUSTOM DARK THEME STYLING ---
 st.markdown("""
 <style>
     .stApp { background-color: #0d0d0d !important; color: #ffffff !important; }
@@ -76,7 +89,7 @@ st.markdown("""
     [data-testid="stChatInput"] textarea { background-color: #21262d !important; color: #ffffff !important; font-size: 16px !important; -webkit-text-fill-color: #ffffff !important; }
     [data-testid="stChatInput"] textarea::placeholder { color: #8b949e !important; -webkit-text-fill-color: #8b949e !important; }
 
-    .stTextInput input { background-color: #262626 !important; color: #ffffff !important; border: 1px solid #404040 !important; }
+    .stTextInput input, .stTextArea textarea { background-color: #262626 !important; color: #ffffff !important; border: 1px solid #404040 !important; }
 
     .chat-card { padding: 15px; border-radius: 10px; margin-bottom: 15px; color: #ffffff; }
     .chat-user { background-color: #21262d; border-left: 5px solid #8b949e; }
@@ -95,10 +108,12 @@ st.markdown("""
 # --- SESSION STATES ---
 if "user" not in st.session_state:
     st.session_state.user = None
+if "current_session_id" not in st.session_state:
+    st.session_state.current_session_id = str(uuid.uuid4())
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-# --- 1. SPLASH SCREEN (5 SECONDS LOGO) ---
+# --- SPLASH SCREEN ---
 if "splash_done" not in st.session_state:
     splash_placeholder = st.empty()
     with splash_placeholder.container():
@@ -108,7 +123,7 @@ if "splash_done" not in st.session_state:
             st.image("logo.png", width=220)
             st.markdown("<h2 style='text-align: center; color: white;'>TEAMUPAI 1.0</h2>", unsafe_allow_html=True)
             st.progress(100)
-    time.sleep(5)
+    time.sleep(3)
     st.session_state.splash_done = True
     splash_placeholder.empty()
 
@@ -122,22 +137,8 @@ if st.session_state.user is None:
     with col2:
         st.image("logo.png", width=100)
         st.title("🔐 Login to TEAMUPAI")
-        st.caption("You must log in to access the Multi-Model Debate Arena.")
+        st.caption("Sign in with your email to access the Multi-Model Debate Arena.")
         
-        # --- SOCIAL OAUTH LOGIN BUTTONS ---
-        st.subheader("Quick Social Login")
-        c1, c2 = st.columns(2)
-        with c1:
-            if st.button("🌐 Sign in with Google", use_container_width=True):
-                login_with_provider("google")
-        with c2:
-            if st.button("🐙 Sign in with GitHub", use_container_width=True):
-                login_with_provider("github")
-                
-        st.markdown("---")
-        
-        # --- STANDARD EMAIL LOGIN / SIGNUP ---
-        st.subheader("Or Sign in with Email")
         tab1, tab2 = st.tabs(["🔑 Sign In", "📝 Sign Up"])
         
         with tab1:
@@ -148,7 +149,8 @@ if st.session_state.user is None:
                     user = login_with_email(email, password)
                     if user:
                         st.session_state.user = {"email": user.email}
-                        st.success("Logged in successfully!")
+                        st.session_state.current_session_id = str(uuid.uuid4())
+                        st.session_state.messages = []
                         st.rerun()
                 else:
                     st.error("Please enter Email & Password!")
@@ -173,14 +175,39 @@ else:
     with h_col2:
         st.title("⚔️ TEAMUPAI 1.0")
 
-    # Sidebar Options
+    # --- SIDEBAR CONFIGURATION ---
     st.sidebar.header("⚙️ Settings")
-    st.sidebar.write(f"👤 Logged in as: **{st.session_state.user['email']}**")
+    st.sidebar.write(f"👤 **{st.session_state.user['email']}**")
     
     if st.sidebar.button("🚪 Logout", type="secondary"):
         st.session_state.user = None
         st.session_state.messages = []
         st.rerun()
+
+    st.sidebar.markdown("---")
+    
+    # ➕ NEW CHAT BUTTON & CHAT HISTORY
+    if st.sidebar.button("➕ New Chat", use_container_width=True, type="primary"):
+        st.session_state.current_session_id = str(uuid.uuid4())
+        st.session_state.messages = []
+        st.rerun()
+
+    user_sessions = load_user_sessions(st.session_state.user['email'])
+    if user_sessions:
+        st.sidebar.subheader("📜 Previous Debates")
+        selected_session = st.sidebar.selectbox(
+            "Select History Session:", 
+            user_sessions, 
+            format_func=lambda x: f"Session: {x[:8]}..."
+        )
+        if st.sidebar.button("📂 Load Selected Chat"):
+            st.session_state.current_session_id = selected_session
+            history_data = load_chat_by_session(selected_session)
+            st.session_state.messages = [
+                {"role": row["role"], "content": row["content"], "type": row["msg_type"]}
+                for row in history_data
+            ]
+            st.rerun()
 
     st.sidebar.markdown("---")
     api_key = st.sidebar.text_input("OpenRouter API Key:", type="password")
@@ -222,9 +249,15 @@ else:
     model_b = FREE_MODELS[model_b_name]
     judge_model = FREE_MODELS[judge_model_name]
 
-    if st.sidebar.button("🗑️ Reset Debate Arena"):
-        st.session_state.messages = []
-        st.rerun()
+    # --- ANONYMOUS FEEDBACK SECTION ---
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("💬 Anonymous Feedback")
+    fb_text = st.sidebar.text_area("How can we improve TEAMUPAI?", height=80, placeholder="Write your thoughts...")
+    if st.sidebar.button("Submit Feedback", use_container_width=True):
+        if fb_text.strip():
+            save_anonymous_feedback(fb_text.strip())
+        else:
+            st.sidebar.warning("Please enter some text first!")
 
     def call_openrouter(client, model_id, prompt):
         try:
@@ -250,9 +283,10 @@ else:
 
     def process_debate_round(user_query, client):
         user_email = st.session_state.user['email']
+        session_id = st.session_state.current_session_id
         
         st.session_state.messages.append({"role": "User", "content": user_query, "type": "user"})
-        save_chat_to_db(user_email, "User", user_query, "user")
+        save_chat_to_db(user_email, session_id, "User", user_query, "user")
         
         full_history = "".join([f"[{m['role']}]: {m['content']}\n\n" for m in st.session_state.messages[:-1]])
 
@@ -261,21 +295,21 @@ else:
             prompt_a = f"History:\n{full_history}\nUser Request: {user_query}\nProvide analysis/solution."
             res_a = call_openrouter(client, model_a, prompt_a)
             st.session_state.messages.append({"role": model_a_name, "content": res_a, "type": "model_a"})
-            save_chat_to_db(user_email, model_a_name, res_a, "model_a")
+            save_chat_to_db(user_email, session_id, model_a_name, res_a, "model_a")
 
         # Step 2: Model B
         with st.spinner(f"🟡 {model_b_name} debating..."):
             prompt_b = f"History:\n{full_history}\nUser: {user_query}\n{model_a_name} said: '{res_a}'\nCritique and improve."
             res_b = call_openrouter(client, model_b, prompt_b)
             st.session_state.messages.append({"role": model_b_name, "content": res_b, "type": "model_b"})
-            save_chat_to_db(user_email, model_b_name, res_b, "model_b")
+            save_chat_to_db(user_email, session_id, model_b_name, res_b, "model_b")
 
         # Step 3: Judge
         with st.spinner(f"🟢 Final Judge ({judge_model_name}) synthesizing..."):
             judge_prompt = f"History:\n{full_history}\nUser: {user_query}\n[{model_a_name}]: {res_a}\n[{model_b_name}]: {res_b}\nSynthesize final truth."
             final_res = call_openrouter(client, judge_model, judge_prompt)
             st.session_state.messages.append({"role": judge_model_name, "content": final_res, "type": "judge"})
-            save_chat_to_db(user_email, judge_model_name, final_res, "judge")
+            save_chat_to_db(user_email, session_id, judge_model_name, final_res, "judge")
 
     # Main Arena Output
     if api_key:
