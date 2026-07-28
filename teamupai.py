@@ -260,27 +260,29 @@ else:
             st.sidebar.warning("Please enter your feedback first!")
 
     def call_openrouter(client, model_id, prompt):
+    try:
+        response = client.chat.completions.create(
+            model=model_id,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        st.warning(f"⚠️ Model `{model_id}` faced an issue. Retrying with fallback model...")
+        time.sleep(1.5)
+        
+        # Safe fallback model selection
+        fallback_model = "google/gemini-2.0-flash-lite-001:free"
+        if model_id == fallback_model:
+            fallback_model = "meta-llama/llama-3.3-70b-instruct:free"
+
         try:
             response = client.chat.completions.create(
-                model=model_id,
+                model=fallback_model,
                 messages=[{"role": "user", "content": prompt}]
             )
             return response.choices[0].message.content
-        except Exception as e:
-            error_msg = str(e).lower()
-            if "429" in error_msg or "rate-limited" in error_msg or "404" in error_msg or "unavailable" in error_msg:
-                fallback_models = [m for m in FREE_MODELS.values() if m != model_id]
-                fallback_model = fallback_models[0] if fallback_models else "google/gemini-2.0-flash-lite-001:free"
-                st.warning(f"⚠️ Model `{model_id}` busy. Switching to `{fallback_model}`...")
-                time.sleep(1)
-                response = client.chat.completions.create(
-                    model=fallback_model,
-                    messages=[{"role": "user", "content": prompt}]
-                )
-                return response.choices[0].message.content
-            else:
-                raise e
-
+        except Exception as inner_e:
+            return f"Error generating response: {str(inner_e)}"
     def process_debate_round(user_query, client):
         user_email = st.session_state.user['email']
         session_id = st.session_state.current_session_id
