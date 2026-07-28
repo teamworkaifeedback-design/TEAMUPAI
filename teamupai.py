@@ -315,7 +315,14 @@ else:
 
     # Main Arena Output
     if api_key:
-        client = OpenAI(base_url="https://openrouter.ai/api/v1", api_key=api_key)
+        client = OpenAI(
+    base_url="https://openrouter.ai/api/v1",
+    api_key=api_key,
+    default_headers={
+        "HTTP-Referer": "https://teamupai.streamlit.app",
+        "X-Title": "TEAMUPAI",
+    }
+)
 
         for msg in st.session_state.messages:
             if msg["type"] == "user":
