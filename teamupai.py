@@ -260,7 +260,7 @@ else:
             st.sidebar.warning("Please enter your feedback first!")
 
     def call_openrouter(client, model_id, prompt):
-    try:
+        try:
         response = client.chat.completions.create(
             model=model_id,
             messages=[{"role": "user", "content": prompt}]
