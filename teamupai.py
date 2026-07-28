@@ -29,7 +29,7 @@ def login_with_email(email, password):
 def register_with_email(email, password):
     try:
         res = supabase.auth.sign_up({"email": email, "password": password})
-        st.success("Account එක සාර්ථකව සෑදුවා! දැන් Sign In වෙන්න.")
+        st.success("Account successfully created! Please log in and verify your email address.")
         return res.user
     except Exception as e:
         st.error(f"Registration Error: {e}")
