@@ -4,7 +4,6 @@ import requests
 import time
 import uuid
 import re
-import json
 from supabase import create_client
 
 # ==============================================================================
@@ -145,13 +144,11 @@ def get_free_models():
                 if is_free and mid:
                     name = m.get("name", mid)
                     free[name] = mid
-
             if len(free) >= 3:
                 return free
     except Exception as e:
         print(f"Failed to fetch free models: {e}")
 
-    # Hardcoded fallbacks — update these periodically
     return {
         "Gemini 2.0 Flash Exp": "google/gemini-2.0-flash-exp:free",
         "Llama 3.3 70B Instruct": "meta-llama/llama-3.3-70b-instruct:free",
@@ -164,17 +161,16 @@ def get_free_models():
 FREE_MODELS = get_free_models()
 MODEL_LIST = list(FREE_MODELS.values())
 
-# Assign models to agent roles intelligently
 MODELS = {
     "pm": MODEL_LIST[0],
     "architect": MODEL_LIST[1] if len(MODEL_LIST) > 1 else MODEL_LIST[0],
     "coder": MODEL_LIST[2] if len(MODEL_LIST) > 2 else MODEL_LIST[0],
     "qa": MODEL_LIST[3] if len(MODEL_LIST) > 3 else MODEL_LIST[0],
-    "judge": MODEL_LIST[4] if len(MODEL_LIST) > 4 else MODEL_LIST[1] if len(MODEL_LIST) > 1 else MODEL_LIST[0],
+    "judge": MODEL_LIST[4] if len(MODEL_LIST) > 4 else (MODEL_LIST[1] if len(MODEL_LIST) > 1 else MODEL_LIST[0]),
 }
 
 # ==============================================================================
-# SYSTEM PROMPTS FOR APP BUILDER WORKFLOW
+# SYSTEM PROMPTS
 # ==============================================================================
 SYSTEM_PROMPTS = {
     "pm": """You are a Senior Product Manager at TEAMUPAI.
@@ -182,47 +178,48 @@ Your job: Convert the user's idea into a clear, actionable PRD.
 - Ask clarifying questions if the idea is vague
 - Define MVP scope strictly (no feature creep)
 - Output a structured markdown PRD with: Overview, User Stories, Tech Requirements, MVP Boundaries
-- Be concise and practical. This PRD will be used by architects and coders.""",
+- Be concise and practical.""",
 
     "architect": """You are a Senior Software Architect at TEAMUPAI.
 Review the PM's PRD and design the technical architecture.
-- Choose the simplest tech stack that works (prefer single-file HTML/CSS/JS for MVPs)
+- Choose the simplest tech stack (prefer single-file HTML/CSS/JS for MVPs)
 - Identify potential issues or missing requirements
-- Output: Tech Stack Decision, File Structure, Key Implementation Notes, Risk Assessment
-- If the PM's PRD is unclear, say so explicitly.""",
+- Output: Tech Stack Decision, File Structure, Key Implementation Notes, Risk Assessment""",
 
     "coder": """You are an Expert Full-Stack Developer at TEAMUPAI.
 Based on the approved architecture, write COMPLETE, RUNNABLE code.
 CRITICAL RULES:
 - Output ONLY code inside ```html or ```python code blocks
-- For web apps: Single HTML file with embedded CSS + JS (no build tools needed)
+- For web apps: Single HTML file with embedded CSS + JS
 - Include all functionality described in the PRD
-- Add comments explaining complex logic
-- Make it visually polished (modern CSS, responsive design)
+- Make it visually polished (modern CSS, responsive)
 - The code MUST run immediately when opened in a browser
 - Do NOT output explanations outside code blocks""",
 
     "qa": """You are a QA Engineer at TEAMUPAI.
 Review the generated code against the original PRD.
-Check for: Missing features, UI/UX issues, JavaScript errors, accessibility problems, mobile responsiveness.
-Output a brief test report: ✅ Passed items, ❌ Failed items, 🔧 Suggested fixes.
-If critical issues exist, say "REBUILD NEEDED" and list exact problems.""",
+Check for: Missing features, UI/UX issues, JS errors, accessibility, mobile responsiveness.
+Output: ✅ Passed items, ❌ Failed items, 🔧 Suggested fixes.
+If critical issues exist, say "REBUILD NEEDED".""",
 
     "judge": """You are the Tech Lead & Final Decision Maker at TEAMUPAI.
 Synthesize ALL agent outputs into a final deliverable.
-- If QA found critical issues → Request specific fixes from Coder
-- If everything passes → Confirm the app is ready
-- Provide a 2-sentence summary of what was built
+- If QA found critical issues → Request specific fixes
+- If everything passes → Confirm ready
+- Provide a 2-sentence summary
 - Always end with: STATUS: READY or STATUS: NEEDS_REVISION"""
 }
 
 # ==============================================================================
-# DARK THEME STYLING
+# STYLING WITH SCROLL FIX
 # ==============================================================================
 st.markdown("""
 <style>
+    /* Base dark theme */
     .stApp { background-color: #0d0d0d !important; color: #ffffff !important; }
     [data-testid="stSidebar"] { background-color: #1a1a1a !important; color: #ffffff !important; }
+    
+    /* Chat input styling */
     [data-testid="stChatInput"] textarea {
         background-color: #21262d !important; color: #ffffff !important;
         font-size: 16px !important; -webkit-text-fill-color: #ffffff !important;
@@ -234,37 +231,80 @@ st.markdown("""
         background-color: #262626 !important; color: #ffffff !important;
         border: 1px solid #404040 !important;
     }
-    .chat-card {
-        padding: 15px; border-radius: 10px; margin-bottom: 12px;
-        color: #fff; line-height: 1.6; word-wrap: break-word;
+
+    /* ===== SCROLLABLE CHAT CONTAINER ===== */
+    .chat-scroll-container {
+        height: calc(100vh - 280px);
+        overflow-y: auto;
+        padding-right: 8px;
+        scroll-behavior: smooth;
     }
-    .chat-user { background-color: #21262d; border-left: 5px solid #8b949e; }
-    .chat-pm { background-color: #1a2332; border-left: 5px solid #58a6ff; }
-    .chat-architect { background-color: #2d1f33; border-left: 5px solid #bc8cff; }
-    .chat-coder { background-color: #1c2d1f; border-left: 5px solid #3fb950; }
-    .chat-qa { background-color: #332b1a; border-left: 5px solid #d29922; }
+    
+    /* Custom scrollbar for chat */
+    .chat-scroll-container::-webkit-scrollbar { width: 6px; }
+    .chat-scroll-container::-webkit-scrollbar-track { background: #1a1a1a; border-radius: 3px; }
+    .chat-scroll-container::-webkit-scrollbar-thumb { background: #404040; border-radius: 3px; }
+    .chat-scroll-container::-webkit-scrollbar-thumb:hover { background: #58a6ff; }
+
+    /* Chat card base styles with proper overflow handling */
+    .chat-card {
+        padding: 15px 18px;
+        border-radius: 10px;
+        margin-bottom: 12px;
+        color: #e6e6e6;
+        line-height: 1.7;
+        word-wrap: break-word;
+        overflow-wrap: break-word;
+        white-space: pre-wrap;
+        font-size: 14px;
+    }
+    
+    /* Ensure long words/URLs don't break layout */
+    .chat-card * { max-width: 100%; overflow-wrap: break-word; }
+    .chat-card code { 
+        background: rgba(255,255,255,0.08); padding: 2px 6px; 
+        border-radius: 4px; font-size: 13px; word-break: break-all;
+    }
+    .chat-card pre { 
+        background: rgba(0,0,0,0.3); padding: 12px; 
+        border-radius: 8px; overflow-x: auto; margin: 8px 0;
+    }
+    .chat-card pre code { background: none; padding: 0; word-break: normal; }
+
+    /* Agent-specific colors */
+    .chat-user { background-color: #21262d; border-left: 4px solid #8b949e; }
+    .chat-pm { background-color: #1a2332; border-left: 4px solid #58a6ff; }
+    .chat-architect { background-color: #2d1f33; border-left: 4px solid #bc8cff; }
+    .chat-coder { background-color: #1c2d1f; border-left: 4px solid #3fb950; }
+    .chat-qa { background-color: #332b1a; border-left: 4px solid #d29922; }
     .chat-judge {
         background: linear-gradient(135deg, #113b19, #1a4a25);
-        border-left: 5px solid #2ea043; border-radius: 12px;
+        border-left: 4px solid #2ea043; border-radius: 12px;
         padding: 20px; margin: 15px 0;
     }
-    .preview-container {
-        border: 1px solid #30363d; border-radius: 12px;
-        overflow: hidden; margin-top: 15px; background: #ffffff;
+
+    /* Agent label */
+    .agent-label {
+        font-size: 11px; text-transform: uppercase;
+        letter-spacing: 1.2px; opacity: 0.6; margin-bottom: 4px;
+        font-weight: 600;
     }
+
+    /* Preview panel */
     .preview-header {
         background: #21262d; padding: 10px 15px; font-weight: bold;
         display: flex; justify-content: space-between; align-items: center;
+        border-radius: 12px 12px 0 0; border: 1px solid #30363d;
     }
     .status-badge {
         padding: 3px 10px; border-radius: 12px; font-size: 12px; font-weight: bold;
     }
     .status-building { background: #d29922; color: #000; }
     .status-ready { background: #2ea043; color: #fff; }
-    .agent-label {
-        font-size: 11px; text-transform: uppercase;
-        letter-spacing: 1px; opacity: 0.7; margin-bottom: 5px;
-    }
+
+    /* Hide default streamlit footer */
+    footer { visibility: hidden; }
+    .stDeployButton { display: none; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -305,7 +345,7 @@ if "splash_done" not in st.session_state:
     splash.empty()
 
 # ==============================================================================
-# OPENROUTER CLIENT (Server-Side Key)
+# OPENROUTER CLIENT
 # ==============================================================================
 client = OpenAI(
     base_url="https://openrouter.ai/api/v1",
@@ -318,14 +358,12 @@ client = OpenAI(
 
 
 def call_model(agent_role, prompt):
-    """Call OpenRouter model with automatic fallback on failure"""
+    """Call OpenRouter model with automatic fallback chain"""
     model_id = MODELS.get(agent_role, MODEL_LIST[0])
     messages = [
         {"role": "system", "content": SYSTEM_PROMPTS[agent_role]},
         {"role": "user", "content": prompt}
     ]
-
-    # Primary attempt
     try:
         resp = client.chat.completions.create(model=model_id, messages=messages)
         return resp.choices[0].message.content
@@ -333,7 +371,6 @@ def call_model(agent_role, prompt):
         st.warning(f"⚠️ {agent_role.upper()} ({model_id}) failed: {e}. Trying fallback...")
         time.sleep(1)
 
-    # Fallback: try every other free model until one works
     for fallback_id in MODEL_LIST:
         if fallback_id == model_id:
             continue
@@ -354,7 +391,7 @@ def extract_code_block(text):
         (r'```htm\s*\n(.*?)```', "html"),
         (r'```python\s*\n(.*?)```', "python"),
         (r'```py\s*\n(.*?)```', "python"),
-        (r'```\s*\n(.*?)```', "html"),  # Default to html
+        (r'```\s*\n(.*?)```', "html"),
     ]
     for pattern, lang in patterns:
         match = re.search(pattern, text, re.DOTALL)
@@ -363,11 +400,51 @@ def extract_code_block(text):
     return None, None
 
 
+def render_chat_messages():
+    """Render all chat messages inside a scrollable container"""
+    type_styles = {
+        "user": "chat-user", "pm": "chat-pm", "architect": "chat-architect",
+        "coder": "chat-coder", "qa": "chat-qa", "judge": "chat-judge"
+    }
+    type_icons = {
+        "user": "🧑‍💻 User", "pm": "📋 PM", "architect": "🏗️ Architect",
+        "coder": "💻 Coder", "qa": "🧪 QA", "judge": "⚖️ Judge"
+    }
+
+    html_parts = ['<div class="chat-scroll-container" id="chatContainer">']
+
+    for msg in st.session_state.messages:
+        css_class = type_styles.get(msg["type"], "chat-user")
+        icon_label = type_icons.get(msg["type"], "💬")
+        
+        # Escape HTML special chars in content but preserve markdown-like formatting
+        content = msg["content"]
+        # Convert newlines to <br> for proper display in HTML div
+        content = content.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        content = content.replace("\n", "<br>")
+
+        html_parts.append(f'<div class="agent-label">{icon_label}</div>')
+        html_parts.append(f'<div class="chat-card {css_class}">{content}</div>')
+
+    html_parts.append('</div>')
+
+    # Auto-scroll to bottom script
+    html_parts.append("""
+    <script>
+        setTimeout(function() {
+            var container = document.getElementById('chatContainer');
+            if (container) { container.scrollTop = container.scrollHeight; }
+        }, 100);
+    </script>
+    """)
+
+    st.markdown("".join(html_parts), unsafe_allow_html=True)
+
+
 def run_app_builder_pipeline(user_query, session_id, user_email):
-    """Full multi-agent app building pipeline: PM → Architect → Coder → QA → Judge"""
+    """Full multi-agent pipeline: PM → Architect → Coder → QA → Judge"""
     st.session_state.build_status = "building"
 
-    # Save user message
     st.session_state.messages.append({"role": "User", "content": user_query, "type": "user"})
     save_chat_to_db(user_email, session_id, "User", user_query, "user")
 
@@ -390,7 +467,6 @@ def run_app_builder_pipeline(user_query, session_id, user_email):
     for agent in agents:
         label = agent_labels[agent]
         with st.spinner(f"{label} working..."):
-            # Build contextual prompt per agent
             if agent == "pm":
                 prompt = context
             elif agent == "architect":
@@ -422,13 +498,10 @@ def run_app_builder_pipeline(user_query, session_id, user_email):
             responses[agent] = result
 
             st.session_state.messages.append({
-                "role": label,
-                "content": result,
-                "type": agent
+                "role": label, "content": result, "type": agent
             })
             save_chat_to_db(user_email, session_id, label, result, agent)
 
-            # Extract code from coder output
             if agent == "coder":
                 code, lang = extract_code_block(result)
                 if code:
@@ -497,7 +570,6 @@ else:
     st.sidebar.header("⚙️ Settings")
     st.sidebar.write(f"👤 **{st.session_state.user['email']}**")
 
-    # Show active models info
     with st.sidebar.expander("🤖 Active Models"):
         for role, mid in MODELS.items():
             st.caption(f"**{role.upper()}:** `{mid}`")
@@ -547,32 +619,10 @@ else:
     # --- MAIN CONTENT: Two Column Layout ---
     chat_col, preview_col = st.columns([1, 1], gap="medium")
 
-    # LEFT: Chat Arena
+    # LEFT: Scrollable Chat Arena
     with chat_col:
         st.subheader("🤖 AI Team Discussion")
-
-        type_styles = {
-            "user": "chat-user", "pm": "chat-pm", "architect": "chat-architect",
-            "coder": "chat-coder", "qa": "chat-qa", "judge": "chat-judge"
-        }
-        type_icons = {
-            "user": "🧑‍💻", "pm": "📋", "architect": "🏗️",
-            "coder": "💻", "qa": "🧪", "judge": "⚖️"
-        }
-
-        for msg in st.session_state.messages:
-            css_class = type_styles.get(msg["type"], "chat-user")
-            icon = type_icons.get(msg["type"], "💬")
-            label = msg["role"]
-            if msg["type"] != "user":
-                st.markdown(
-                    f'<div class="agent-label">{icon} {label}</div>',
-                    unsafe_allow_html=True
-                )
-            st.markdown(
-                f'<div class="chat-card {css_class}">{msg["content"]}</div>',
-                unsafe_allow_html=True
-            )
+        render_chat_messages()
 
         user_input = st.chat_input("💡 Describe the app you want to build...")
         if user_input:
@@ -608,16 +658,13 @@ else:
                 )
             else:
                 st.code(st.session_state.generated_code, language="python")
-                st.info(
-                    "🐍 Python apps require a backend runtime. "
-                    "HTML apps preview instantly above."
-                )
+                st.info("🐍 Python apps require a backend runtime. HTML apps preview instantly.")
         else:
             st.markdown("""
             <div style="border: 2px dashed #30363d; border-radius: 12px; 
                         padding: 60px 20px; text-align: center; color: #8b949e;">
                 <h3>🚀 No App Built Yet</h3>
-                <p>Describe your app idea in the chat and our AI team will build it!</p>
+                <p>Describe your app idea and our AI team will build it!</p>
                 <p style="font-size: 14px; margin-top: 15px;">
                     Try: <em>"Build me a pomodoro timer with dark mode"</em><br>
                     or: <em>"Create a personal finance tracker with charts"</em><br>
