@@ -3,19 +3,34 @@ from openai import OpenAI
 import requests
 import time
 import uuid
+from datetime import date
 from supabase import create_client
 
 # Page Configuration
-st.set_page_config(page_title="TEAMUPAI 1.0", page_icon="⚔️", layout="wide")
+st.set_page_config(page_title="TEAMUPAI 1.1", page_icon="⚔️", layout="wide")
 
-# --- SUPABASE CONFIGURATION ---
+# --- DAILY PROMPT LIMIT CONFIGURATION ---
+DAILY_PROMPT_LIMIT = 5  # You can change the limit per user here
+
+# --- SUPABASE & OPENROUTER CONFIGURATION ---
 try:
     SUPABASE_URL = st.secrets["SUPABASE_URL"]
     SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
+    OPENROUTER_API_KEY = st.secrets["OPENROUTER_API_KEY"]
     supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 except Exception:
-    st.error("⚠️ Supabase Secrets not configured! Check Streamlit Settings -> Secrets.")
+    st.error("⚠️ Secrets not configured properly! Check Streamlit Settings -> Secrets.")
     st.stop()
+
+# Initialize Centralized OpenRouter Client
+client = OpenAI(
+    base_url="https://openrouter.ai/api/v1",
+    api_key=OPENROUTER_API_KEY,
+    default_headers={
+        "HTTP-Referer": "https://teamupai.streamlit.app",
+        "X-Title": "TEAMUPAI",
+    }
+)
 
 # --- SUPABASE AUTH & DB FUNCTIONS ---
 def login_with_email(email, password):
@@ -48,7 +63,6 @@ def save_chat_to_db(user_email, session_id, role, content, msg_type):
         print(f"Error saving chat: {e}")
 
 def load_user_sessions(user_email):
-    """Fetch distinct chat sessions for the user"""
     try:
         res = supabase.table("chat_history").select("session_id, created_at").eq("user_email", user_email).order("created_at", desc=True).execute()
         sessions = []
@@ -63,7 +77,6 @@ def load_user_sessions(user_email):
         return []
 
 def load_chat_by_session(session_id):
-    """Load messages of a specific session"""
     try:
         res = supabase.table("chat_history").select("*").eq("session_id", session_id).order("created_at").execute()
         return res.data
@@ -71,15 +84,33 @@ def load_chat_by_session(session_id):
         return []
 
 def save_anonymous_feedback(text):
-    """Save user feedback without personal details"""
     try:
         supabase.table("feedbacks").insert({"feedback_text": text}).execute()
         st.sidebar.success("Thank you for your feedback! 🙏")
     except Exception as e:
         st.sidebar.error(f"Error submitting feedback: {e}")
 
-def call_openrouter(client, model_id, prompt):
-    """Call OpenRouter API with fallback support"""
+# --- USAGE TRACKING FUNCTIONS ---
+def check_and_update_usage(user_email):
+    """Check if user reached daily prompt limit and update count"""
+    today_str = str(date.today())
+    try:
+        res = supabase.table("user_usage").select("*").eq("user_email", user_email).eq("usage_date", today_str).execute()
+        if res.data:
+            current_count = res.data[0]["prompt_count"]
+            if current_count >= DAILY_PROMPT_LIMIT:
+                return False, current_count
+            else:
+                supabase.table("user_usage").update({"prompt_count": current_count + 1}).eq("user_email", user_email).eq("usage_date", today_str).execute()
+                return True, current_count + 1
+        else:
+            supabase.table("user_usage").insert({"user_email": user_email, "usage_date": today_str, "prompt_count": 1}).execute()
+            return True, 1
+    except Exception as e:
+        print(f"Usage tracking error: {e}")
+        return True, 0  # Fallback to allow if DB error occurs
+
+def call_openrouter(model_id, prompt):
     try:
         response = client.chat.completions.create(
             model=model_id,
@@ -121,12 +152,6 @@ st.markdown("""
     .chat-model-a { background-color: #3b1111; border-left: 5px solid #ff4d4d; }
     .chat-model-b { background-color: #3b3311; border-left: 5px solid #ffcc00; }
     .chat-judge { background-color: #113b19; border-left: 5px solid #2ea043; border-radius: 10px; padding: 20px; margin-top: 15px; margin-bottom: 20px; }
-
-    .openrouter-btn {
-        display: inline-block; width: 100%; text-align: center; background-color: #2b2b2b;
-        color: #61afef !important; padding: 8px 0px; border-radius: 5px; text-decoration: none;
-        font-weight: bold; border: 1px solid #404040; margin-top: 5px; margin-bottom: 15px;
-    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -235,12 +260,6 @@ else:
             st.rerun()
 
     st.sidebar.markdown("---")
-    api_key = st.sidebar.text_input("OpenRouter API Key:", type="password")
-
-    st.sidebar.markdown(
-        '<a href="https://openrouter.ai/settings/keys" target="_blank" class="openrouter-btn">🔑 Get OpenRouter API Key (Free)</a>',
-        unsafe_allow_html=True
-    )
 
     # Fetch Active Free Models
     @st.cache_data(ttl=3600)
@@ -284,8 +303,15 @@ else:
         else:
             st.sidebar.warning("Please enter your feedback first!")
 
-    def process_debate_round(user_query, client):
+    def process_debate_round(user_query):
         user_email = st.session_state.user['email']
+        
+        # Check usage limit
+        allowed, count = check_and_update_usage(user_email)
+        if not allowed:
+            st.error(f"🛑 Daily limit reached ({DAILY_PROMPT_LIMIT}/{DAILY_PROMPT_LIMIT} prompts)! Please come back tomorrow.")
+            return
+
         session_id = st.session_state.current_session_id
         
         st.session_state.messages.append({"role": "User", "content": user_query, "type": "user"})
@@ -296,49 +322,36 @@ else:
         # Step 1: Model A
         with st.spinner(f"🔴 {model_a_name} generating..."):
             prompt_a = f"History:\n{full_history}\nUser Request: {user_query}\nProvide analysis/solution."
-            res_a = call_openrouter(client, model_a, prompt_a)
+            res_a = call_openrouter(model_a, prompt_a)
             st.session_state.messages.append({"role": model_a_name, "content": res_a, "type": "model_a"})
             save_chat_to_db(user_email, session_id, model_a_name, res_a, "model_a")
 
         # Step 2: Model B
         with st.spinner(f"🟡 {model_b_name} debating..."):
             prompt_b = f"History:\n{full_history}\nUser: {user_query}\n{model_a_name} said: '{res_a}'\nCritique and improve."
-            res_b = call_openrouter(client, model_b, prompt_b)
+            res_b = call_openrouter(model_b, prompt_b)
             st.session_state.messages.append({"role": model_b_name, "content": res_b, "type": "model_b"})
             save_chat_to_db(user_email, session_id, model_b_name, res_b, "model_b")
 
         # Step 3: Judge
         with st.spinner(f"🟢 Final Judge ({judge_model_name}) synthesizing..."):
             judge_prompt = f"History:\n{full_history}\nUser: {user_query}\n[{model_a_name}]: {res_a}\n[{model_b_name}]: {res_b}\nSynthesize final truth."
-            final_res = call_openrouter(client, judge_model, judge_prompt)
+            final_res = call_openrouter(judge_model, judge_prompt)
             st.session_state.messages.append({"role": judge_model_name, "content": final_res, "type": "judge"})
             save_chat_to_db(user_email, session_id, judge_model_name, final_res, "judge")
 
     # Main Arena Output
-    if api_key:
-        client = OpenAI(
-            base_url="https://openrouter.ai/api/v1",
-            api_key=api_key,
-            default_headers={
-                "HTTP-Referer": "https://teamupai.streamlit.app",
-                "X-Title": "TEAMUPAI",
-            }
-        )
+    for msg in st.session_state.messages:
+        if msg["type"] == "user":
+            st.markdown(f'<div class="chat-card chat-user"><b>🧑‍💻 User:</b><br><br>{msg["content"]}</div>', unsafe_allow_html=True)
+        elif msg["type"] == "model_a":
+            st.markdown(f'<div class="chat-card chat-model-a"><b>🔴 {msg["role"]}:</b><br><br>{msg["content"]}</div>', unsafe_allow_html=True)
+        elif msg["type"] == "model_b":
+            st.markdown(f'<div class="chat-card chat-model-b"><b>🟡 {msg["role"]}:</b><br><br>{msg["content"]}</div>', unsafe_allow_html=True)
+        elif msg["type"] == "judge":
+            st.markdown(f'<div class="chat-judge"><h3>🟢 🏆 Final Synthesized Output ({msg["role"]}):</h3><hr>{msg["content"]}</div>', unsafe_allow_html=True)
 
-        for msg in st.session_state.messages:
-            if msg["type"] == "user":
-                st.markdown(f'<div class="chat-card chat-user"><b>🧑‍💻 User:</b><br><br>{msg["content"]}</div>', unsafe_allow_html=True)
-            elif msg["type"] == "model_a":
-                st.markdown(f'<div class="chat-card chat-model-a"><b>🔴 {msg["role"]}:</b><br><br>{msg["content"]}</div>', unsafe_allow_html=True)
-            elif msg["type"] == "model_b":
-                st.markdown(f'<div class="chat-card chat-model-b"><b>🟡 {msg["role"]}:</b><br><br>{msg["content"]}</div>', unsafe_allow_html=True)
-            elif msg["type"] == "judge":
-                st.markdown(f'<div class="chat-judge"><h3>🟢 🏆 Final Synthesized Output ({msg["role"]}):</h3><hr>{msg["content"]}</div>', unsafe_allow_html=True)
-
-        user_input = st.chat_input("Enter your prompt or follow-up question here...")
-        if user_input:
-            process_debate_round(user_input, client)
-            st.rerun()
-
-    else:
-        st.info("👈 Please enter your OpenRouter API Key in the sidebar to start.")
+    user_input = st.chat_input("Enter your prompt or follow-up question here...")
+    if user_input:
+        process_debate_round(user_input)
+        st.rerun()
