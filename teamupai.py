@@ -7,10 +7,10 @@ from datetime import date
 from supabase import create_client
 
 # Page Configuration
-st.set_page_config(page_title="TEAMUPAI 1.1", page_icon="⚔️", layout="wide")
+st.set_page_config(page_title="TEAMUPAI 1.1", page_icon="logo.png", layout="wide")
 
 # --- DAILY PROMPT LIMIT CONFIGURATION ---
-DAILY_PROMPT_LIMIT = 5  # You can change the limit per user here
+DAILY_PROMPT_LIMIT = 10  # Limit per user per day
 
 # --- SUPABASE & OPENROUTER CONFIGURATION ---
 try:
@@ -92,7 +92,6 @@ def save_anonymous_feedback(text):
 
 # --- USAGE TRACKING FUNCTIONS ---
 def check_and_update_usage(user_email):
-    """Check if user reached daily prompt limit and update count"""
     today_str = str(date.today())
     try:
         res = supabase.table("user_usage").select("*").eq("user_email", user_email).eq("usage_date", today_str).execute()
@@ -108,7 +107,7 @@ def check_and_update_usage(user_email):
             return True, 1
     except Exception as e:
         print(f"Usage tracking error: {e}")
-        return True, 0  # Fallback to allow if DB error occurs
+        return True, 0
 
 def call_openrouter(model_id, prompt):
     try:
@@ -162,6 +161,8 @@ if "current_session_id" not in st.session_state:
     st.session_state.current_session_id = str(uuid.uuid4())
 if "messages" not in st.session_state:
     st.session_state.messages = []
+if "editing_idx" not in st.session_state:
+    st.session_state.editing_idx = None
 
 # --- SPLASH SCREEN ---
 if "splash_done" not in st.session_state:
@@ -171,7 +172,7 @@ if "splash_done" not in st.session_state:
         col1, col2, col3 = st.columns([1, 2, 1])
         with col2:
             st.image("logo.png", width=220)
-            st.markdown("<h2 style='text-align: center; color: white;'>TEAMUPAI 1.0</h2>", unsafe_allow_html=True)
+            st.markdown("<h2 style='text-align: center; color: white;'>TEAMUPAI 1.1</h2>", unsafe_allow_html=True)
             st.progress(100)
     time.sleep(3)
     st.session_state.splash_done = True
@@ -186,7 +187,7 @@ if st.session_state.user is None:
     
     with col2:
         st.image("logo.png", width=100)
-        st.title("🔐 Login to TEAMUPAI")
+        st.title("🔐 Login to TEAMUPAI 1.1")
         st.caption("Sign in with your email to access the Multi-Model Debate Arena.")
         
         tab1, tab2 = st.tabs(["🔑 Sign In", "📝 Sign Up"])
@@ -223,7 +224,7 @@ else:
     with h_col1:
         st.image("logo.png", width=50)
     with h_col2:
-        st.title("⚔️ TEAMUPAI 1.0")
+        st.title("⚔️ TEAMUPAI 1.1")
 
     # --- SIDEBAR CONFIGURATION ---
     st.sidebar.header("⚙️ Settings")
@@ -240,6 +241,7 @@ else:
     if st.sidebar.button("➕ New Chat", use_container_width=True, type="primary"):
         st.session_state.current_session_id = str(uuid.uuid4())
         st.session_state.messages = []
+        st.session_state.editing_idx = None
         st.rerun()
 
     user_sessions = load_user_sessions(st.session_state.user['email'])
@@ -257,6 +259,7 @@ else:
                 {"role": row["role"], "content": row["content"], "type": row["msg_type"]}
                 for row in history_data
             ]
+            st.session_state.editing_idx = None
             st.rerun()
 
     st.sidebar.markdown("---")
@@ -303,7 +306,7 @@ else:
         else:
             st.sidebar.warning("Please enter your feedback first!")
 
-    def process_debate_round(user_query):
+    def process_debate_round(user_query, truncate_from_idx=None):
         user_email = st.session_state.user['email']
         
         # Check usage limit
@@ -313,6 +316,10 @@ else:
             return
 
         session_id = st.session_state.current_session_id
+
+        # Truncate messages if editing or regenerating
+        if truncate_from_idx is not None:
+            st.session_state.messages = st.session_state.messages[:truncate_from_idx]
         
         st.session_state.messages.append({"role": "User", "content": user_query, "type": "user"})
         save_chat_to_db(user_email, session_id, "User", user_query, "user")
@@ -341,15 +348,49 @@ else:
             save_chat_to_db(user_email, session_id, judge_model_name, final_res, "judge")
 
     # Main Arena Output
-    for msg in st.session_state.messages:
+    for i, msg in enumerate(st.session_state.messages):
         if msg["type"] == "user":
-            st.markdown(f'<div class="chat-card chat-user"><b>🧑‍💻 User:</b><br><br>{msg["content"]}</div>', unsafe_allow_html=True)
+            col_msg, col_btn = st.columns([0.9, 0.1])
+            with col_msg:
+                st.markdown(f'<div class="chat-card chat-user"><b>🧑‍💻 User:</b><br><br>{msg["content"]}</div>', unsafe_allow_html=True)
+            with col_btn:
+                if st.button("✏️ Edit", key=f"edit_btn_{i}"):
+                    st.session_state.editing_idx = i
+                    st.rerun()
+
+            # Display inline edit text-box if edit button clicked
+            if st.session_state.editing_idx == i:
+                edited_text = st.text_area("Edit your prompt:", value=msg["content"], key=f"edit_input_{i}")
+                col_save, col_cancel = st.columns([0.2, 0.8])
+                if col_save.button("Save & Resubmit", key=f"save_{i}", type="primary"):
+                    st.session_state.editing_idx = None
+                    process_debate_round(edited_text, truncate_from_idx=i)
+                    st.rerun()
+                if col_cancel.button("Cancel", key=f"cancel_{i}"):
+                    st.session_state.editing_idx = None
+                    st.rerun()
+
         elif msg["type"] == "model_a":
             st.markdown(f'<div class="chat-card chat-model-a"><b>🔴 {msg["role"]}:</b><br><br>{msg["content"]}</div>', unsafe_allow_html=True)
         elif msg["type"] == "model_b":
             st.markdown(f'<div class="chat-card chat-model-b"><b>🟡 {msg["role"]}:</b><br><br>{msg["content"]}</div>', unsafe_allow_html=True)
         elif msg["type"] == "judge":
             st.markdown(f'<div class="chat-judge"><h3>🟢 🏆 Final Synthesized Output ({msg["role"]}):</h3><hr>{msg["content"]}</div>', unsafe_allow_html=True)
+            
+            # Show Regenerate button for the latest Judge output
+            if i == len(st.session_state.messages) - 1:
+                if st.button("🔄 Regenerate Response", type="secondary"):
+                    # Find last user prompt
+                    last_user_prompt = ""
+                    last_user_idx = 0
+                    for u_idx in range(len(st.session_state.messages) - 1, -1, -1):
+                        if st.session_state.messages[u_idx]["type"] == "user":
+                            last_user_prompt = st.session_state.messages[u_idx]["content"]
+                            last_user_idx = u_idx
+                            break
+                    if last_user_prompt:
+                        process_debate_round(last_user_prompt, truncate_from_idx=last_user_idx)
+                        st.rerun()
 
     user_input = st.chat_input("Enter your prompt or follow-up question here...")
     if user_input:
